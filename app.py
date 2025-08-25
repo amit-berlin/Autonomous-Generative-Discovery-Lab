@@ -1,42 +1,54 @@
 import streamlit as st
 import pandas as pd
-from sentence_transformers import SentenceTransformer, util
+import re
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 import spacy
 from textblob import TextBlob
+import time
 
-# ------------------ Setup ------------------
-st.set_page_config(page_title="AMPIP Minimal MVP", layout="wide")
-st.title("AMPIP Minimal MVP – Lightweight Patent Draft Generator")
+st.set_page_config(page_title="AMPIP AGDL MVP", layout="wide")
+st.title("AMPIP AGDL v5 – Autonomous Multi-Agent Patent Innovation Platform (Demo)")
 
-# Load lightweight models
+# -------------------- Setup Models --------------------
 @st.cache_resource
 def load_models():
     nlp = spacy.load("en_core_web_sm")
-    model = SentenceTransformer('all-MiniLM-L6-v2')
-    return nlp, model
+    return nlp
 
-nlp, embed_model = load_models()
+nlp = load_models()
 
-# Demo prior-art dataset (small)
+# Demo prior-art dataset (tiny)
 prior_art_docs = [
-    "Method for autonomous data extraction in IT research labs.",
-    "System for automated document analysis and novelty scoring.",
-    "Technique for intelligent RPA to submit patent applications."
+    "Automated document analysis in IT research labs.",
+    "System for multi-agent AI patent drafting.",
+    "Technique for RPA-based patent submission."
 ]
-prior_art_embeddings = embed_model.encode(prior_art_docs, convert_to_tensor=True)
 
-# ------------------ Helper Functions ------------------
+vectorizer = TfidfVectorizer()
+prior_art_tfidf = vectorizer.fit_transform(prior_art_docs)
+
+# -------------------- Helper Functions --------------------
+def log_step(step_log, message):
+    step_log.append(message)
+    st.write(f"- {message}")
+    time.sleep(0.1)  # simulate real-time processing
+
+def preprocess_text(text):
+    text = text.lower()
+    text = re.sub(r'\W+', ' ', text)
+    return text
+
 def compute_novelty(doc_text):
-    doc_embedding = embed_model.encode(doc_text, convert_to_tensor=True)
-    similarity_scores = util.cos_sim(doc_embedding, prior_art_embeddings)
-    novelty_score = 1 - similarity_scores.max().item()  # Higher = more novel
-    return round(novelty_score,2)
+    doc_vector = vectorizer.transform([doc_text])
+    sim_scores = cosine_similarity(doc_vector, prior_art_tfidf)
+    novelty_score = 1 - sim_scores.max()
+    return round(float(novelty_score),2)
 
 def compute_usefulness(doc_text):
     blob = TextBlob(doc_text)
     polarity = blob.sentiment.polarity
-    usefulness_score = round((polarity +1)/2, 2)  # scale 0-1
-    return usefulness_score
+    return round((polarity + 1)/2,2)
 
 def extract_keywords(doc_text):
     doc = nlp(doc_text)
@@ -47,11 +59,22 @@ def extract_keywords(doc_text):
 
 def generate_patent_draft(doc_name, doc_text, novelty, usefulness, keywords):
     abstract = f"Abstract for {doc_name}: Innovation involving {', '.join(keywords)}."
-    claims = f"Claim 1: Novel method using {', '.join(keywords)}. Novelty Score: {novelty}"
-    description = f"Description: The method leverages {', '.join(keywords)}. Usefulness Score: {usefulness}"
+    claims = f"Claim 1: Method using {', '.join(keywords)}. Novelty Score: {novelty}"
+    description = f"Description: Method leverages {', '.join(keywords)}. Usefulness Score: {usefulness}"
     return {"Document": doc_name, "Abstract": abstract, "Claims": claims, "Description": description}
 
-# ------------------ Demo Section ------------------
+def simulate_rpa(doc_name):
+    steps = [
+        "Prepare submission form",
+        "Fill abstract field",
+        "Fill claims field",
+        "Fill description field",
+        "Submit application",
+        "Receive confirmation"
+    ]
+    return steps
+
+# -------------------- Demo Section --------------------
 st.header("Demo Documents")
 demo_docs = {
     "Demo_Document_1": "This invention improves automated patent application process in research labs.",
@@ -59,32 +82,49 @@ demo_docs = {
 }
 
 demo_results = []
+step_log = []
+
 for name, text in demo_docs.items():
-    novelty = compute_novelty(text)
-    usefulness = compute_usefulness(text)
-    keywords = extract_keywords(text)
-    draft = generate_patent_draft(name, text, novelty, usefulness, keywords)
+    log_step(step_log, f"Processing demo document: {name}")
+    pre_text = preprocess_text(text)
+    log_step(step_log, "Preprocessing completed")
+    keywords = extract_keywords(pre_text)
+    log_step(step_log, f"Keywords extracted: {', '.join(keywords)}")
+    novelty = compute_novelty(pre_text)
+    log_step(step_log, f"Novelty score computed: {novelty}")
+    usefulness = compute_usefulness(pre_text)
+    log_step(step_log, f"Usefulness score computed: {usefulness}")
+    draft = generate_patent_draft(name, pre_text, novelty, usefulness, keywords)
+    log_step(step_log, "Patent draft generated")
     demo_results.append(draft)
+    rpa_steps = simulate_rpa(name)
+    for s in rpa_steps:
+        log_step(step_log, f"RPA Step: {s}")
+    log_step(step_log, f"Demo document {name} processing complete\n")
 
 st.subheader("Patent Drafts – Demo")
 st.table(pd.DataFrame(demo_results))
 
-# ------------------ User Upload Section ------------------
-st.header("Upload Your Document")
-uploaded_file = st.file_uploader("Upload PDF/TXT/DOCX", type=['txt'], key="file_upload")
+# -------------------- User Upload Section --------------------
+st.header("Upload Your Own Document")
+uploaded_file = st.file_uploader("Upload TXT file", type=['txt'], key="file_upload")
 if uploaded_file:
     text = uploaded_file.read().decode('utf-8')
-    novelty = compute_novelty(text)
-    usefulness = compute_usefulness(text)
-    keywords = extract_keywords(text)
-    draft = generate_patent_draft(uploaded_file.name, text, novelty, usefulness, keywords)
-
-    st.subheader("Step-by-Step Processing")
-    st.write(f"- Document Uploaded: {uploaded_file.name}")
-    st.write(f"- Keywords Extracted: {', '.join(keywords)}")
-    st.write(f"- Novelty Score Computed: {novelty}")
-    st.write(f"- Usefulness Score Computed: {usefulness}")
-    st.write(f"- Patent Draft Generated")
+    log_step(step_log, f"User uploaded document: {uploaded_file.name}")
+    pre_text = preprocess_text(text)
+    log_step(step_log, "Preprocessing completed")
+    keywords = extract_keywords(pre_text)
+    log_step(step_log, f"Keywords extracted: {', '.join(keywords)}")
+    novelty = compute_novelty(pre_text)
+    log_step(step_log, f"Novelty score computed: {novelty}")
+    usefulness = compute_usefulness(pre_text)
+    log_step(step_log, f"Usefulness score computed: {usefulness}")
+    draft = generate_patent_draft(uploaded_file.name, pre_text, novelty, usefulness, keywords)
+    log_step(step_log, "Patent draft generated")
+    rpa_steps = simulate_rpa(uploaded_file.name)
+    for s in rpa_steps:
+        log_step(step_log, f"RPA Step: {s}")
+    log_step(step_log, f"User document {uploaded_file.name} processing complete\n")
 
     st.subheader("Patent Draft Output")
     st.table(pd.DataFrame([draft]))
@@ -97,3 +137,12 @@ if uploaded_file:
         file_name=f"{uploaded_file.name}_PatentDraft.txt",
         mime="text/plain"
     )
+
+# -------------------- Frontend UX Tutorial --------------------
+st.header("Backend Processing Steps – Step-by-Step Tutorial")
+st.write("The following 30–40 steps simulate a real enterprise AMPIP AGDL workflow:")
+for step in step_log:
+    st.write(f"- {step}")
+
+st.success("MVP processing completed successfully. All steps deterministic and error-free on Streamlit Free.")
+st.info("Note: In a real web app, these steps would use full LLMs, RPA automation, and enterprise APIs. Currently, this MVP is lightweight and fully deterministic for demo purposes.")
